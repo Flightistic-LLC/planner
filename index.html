@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Towne's Planner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f6fb">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232f5bd9'/%3E%3Crect x='14' y='18' width='36' height='32' rx='6' fill='%23fff'/%3E%3Crect x='14' y='18' width='36' height='9' rx='4' fill='%23ffe66d'/%3E%3C/svg%3E">
+<style>html,body{margin:0}img{max-width:100%}[hidden]{display:none!important}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>
+
+<!-- ▼▼▼ PASTE YOUR FIREBASE CONFIG BETWEEN THE BRACES BELOW (from Firebase console → Project settings → Your apps → SDK setup and configuration → Config) ▼▼▼ -->
+<script>
+window.FIREBASE_CONFIG = {
+  apiKey: "AIzaSyApREtks0Wm__YKf4Iwr2L7wPghxYoQ9JM",
+  authDomain: "planner-2470d.firebaseapp.com",
+  projectId: "planner-2470d",
+  storageBucket: "planner-2470d.firebasestorage.app",
+  messagingSenderId: "14214578266",
+  appId: "1:14214578266:web:bb24f3aff82019cad7d863"
+};
+</script>
+<!-- ▲▲▲ -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Karla:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one phone-width column, a sticky "now" header, a plan that reads like a ruled page, highlighter marks the current block. */
+:root{
+  --bg:#f7f6fb; --paper:#ffffff; --ink:#1e1b33; --ink-2:#5b5876; --ink-3:#9290a8; --rule:#e6e3f0;
+  --accent:#2f5bd9; --accent-ink:#ffffff; --hi:#ffe66d; --hi-ink:#2a2300;
+  --good:#1f9d5a; --warn:#d98a0b; --bad:#d9433b; --good-bg:#e4f6ec; --warn-bg:#fff2dc; --bad-bg:#fde6e4;
+  --display:"Bricolage Grotesque","Avenir Next",Avenir,"Segoe UI",sans-serif;
+  --body:"Karla","Helvetica Neue",Arial,sans-serif;
+  --shadow:0 10px 30px rgba(30,27,51,.12);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#15131f; --paper:#1e1b2b; --ink:#f1efff; --ink-2:#b4b0cf; --ink-3:#7c7897; --rule:#2d2a3d;
+  --accent:#8aa4ff; --accent-ink:#0f1430; --hi:#e8cf3a; --hi-ink:#201b00;
+  --good:#4ccb86; --warn:#f0b24a; --bad:#f07a73; --good-bg:#17352a; --warn-bg:#3a2d12; --bad-bg:#3d1f1d;
+  --shadow:0 10px 30px rgba(0,0,0,.45); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#15131f; --paper:#1e1b2b; --ink:#f1efff; --ink-2:#b4b0cf; --ink-3:#7c7897; --rule:#2d2a3d;
+  --accent:#8aa4ff; --accent-ink:#0f1430; --hi:#e8cf3a; --hi-ink:#201b00;
+  --good:#4ccb86; --warn:#f0b24a; --bad:#f07a73; --good-bg:#17352a; --warn-bg:#3a2d12; --bad-bg:#3d1f1d;
+  --shadow:0 10px 30px rgba(0,0,0,.45); color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 110px}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.1}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:6px}
+.wrap{max-width:560px;margin:0 auto}
+
+/* header */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding:14px 0 10px;display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+.top .date{font-family:var(--display);font-weight:800;font-size:1.65rem;letter-spacing:-.01em}
+.top .sub{color:var(--ink-2);font-size:.9rem}
+.top .love{color:var(--accent);font-weight:600;font-size:.95rem;margin:2px 0 1px}
+.tabs{display:flex;gap:4px;background:var(--paper);border:1px solid var(--rule);border-radius:999px;padding:4px}
+.tabs button{border:0;background:transparent;border-radius:999px;padding:6px 12px;font-weight:600;color:var(--ink-2);font-size:.9rem}
+.tabs button[aria-selected="true"]{background:var(--ink);color:var(--bg)}
+
+/* sections */
+.day{margin-top:22px}
+.day h2{font-size:1.05rem;font-weight:700;display:flex;align-items:baseline;gap:10px}
+.day h2 .meta{font-family:var(--body);font-weight:500;color:var(--ink-3);font-size:.85rem}
+.blocks{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column}
+.block{display:grid;grid-template-columns:92px 1fr auto;gap:12px;align-items:center;padding:12px 4px;border-top:1px solid var(--rule);min-width:0}
+.block:last-child{border-bottom:1px solid var(--rule)}
+.block .time{font-variant-numeric:tabular-nums;font-weight:600;font-size:.92rem;color:var(--ink-2);line-height:1.25}
+.block .time small{display:block;color:var(--ink-3);font-weight:500;font-size:.78rem}
+.block .what{min-width:0}
+.block .title{font-weight:600;overflow-wrap:anywhere}
+.block .cls{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2);font-size:.85rem;margin-top:2px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--c,var(--accent));flex:none}
+.block.now{background:var(--hi);color:var(--hi-ink);border-radius:12px;border-color:transparent;padding-left:12px;padding-right:10px;margin:4px -8px}
+.block.now .time,.block.now .cls,.block.now .time small{color:var(--hi-ink)}
+.block.now + .block{border-top-color:transparent}
+.block .flag{font-size:.78rem;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.flag.warn{background:var(--warn-bg);color:var(--warn)}
+.flag.bad{background:var(--bad-bg);color:var(--bad)}
+.check{width:30px;height:30px;border-radius:50%;border:2px solid var(--ink-3);background:transparent;display:grid;place-items:center;flex:none;padding:0}
+.check:hover{border-color:var(--good)}
+.check svg{width:16px;height:16px;stroke:var(--good);stroke-width:3;fill:none;opacity:0}
+.check.done{border-color:var(--good);background:var(--good-bg)}
+.check.done svg{opacity:1}
+.actions{display:flex;gap:6px;align-items:center}
+.iconbtn{border:0;background:transparent;color:var(--ink-3);padding:6px;border-radius:8px;line-height:0}
+.iconbtn:hover{background:var(--rule);color:var(--ink)}
+.iconbtn svg{width:18px;height:18px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+
+.empty{border:1.5px dashed var(--rule);border-radius:14px;padding:28px 20px;text-align:center;color:var(--ink-2);margin-top:14px}
+.empty strong{display:block;color:var(--ink);font-family:var(--display);font-size:1.15rem;margin-bottom:6px}
+.note{color:var(--ink-2);font-size:.9rem}
+.banner{margin-top:16px;padding:12px 14px;border-radius:12px;font-size:.92rem;display:flex;gap:10px;align-items:flex-start}
+.banner.warn{background:var(--warn-bg);color:var(--warn)}
+.banner.bad{background:var(--bad-bg);color:var(--bad)}
+.banner b{color:inherit}
+
+/* FAB */
+.fab{position:fixed;right:calc(20px + env(safe-area-inset-right,0px));bottom:calc(22px + env(safe-area-inset-bottom,0px));z-index:6;
+  background:var(--accent);color:var(--accent-ink);border:0;border-radius:999px;height:56px;padding:0 20px 0 16px;display:flex;align-items:center;gap:8px;
+  font-family:var(--display);font-weight:700;font-size:1.05rem;box-shadow:var(--shadow)}
+.fab svg{width:22px;height:22px;stroke:currentColor;stroke-width:2.6;fill:none;stroke-linecap:round}
+
+/* sheet */
+.scrim{position:fixed;inset:0;background:rgba(20,16,40,.45);z-index:20}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:21;background:var(--paper);border-radius:22px 22px 0 0;box-shadow:var(--shadow);
+  max-height:92vh;overflow:auto;padding:14px max(18px,env(safe-area-inset-right,0px)) calc(22px + env(safe-area-inset-bottom,0px)) max(18px,env(safe-area-inset-left,0px))}
+.sheet .inner{max-width:560px;margin:0 auto}
+.grab{width:40px;height:4px;border-radius:2px;background:var(--rule);margin:0 auto 14px}
+.sheet h2{font-size:1.35rem;font-weight:800;margin-bottom:14px}
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;min-width:0}
+.field label{font-weight:600;font-size:.88rem;color:var(--ink-2);letter-spacing:.01em}
+.field input,.field select,.field textarea{background:var(--bg);border:1.5px solid var(--rule);border-radius:10px;padding:11px 12px;width:100%;min-width:0}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent);outline:none}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:380px){.row{grid-template-columns:1fr}}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:1.5px solid var(--rule);background:var(--bg);border-radius:999px;padding:7px 13px;font-weight:600;font-size:.9rem}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btns{display:flex;gap:10px;margin-top:6px;flex-wrap:wrap}
+.btn{border:0;border-radius:12px;padding:13px 18px;font-weight:700;font-family:var(--display);font-size:1rem;flex:1;min-width:120px}
+.btn.primary{background:var(--accent);color:var(--accent-ink)}
+.btn.ghost{background:var(--bg);border:1.5px solid var(--rule)}
+.btn.danger{background:var(--bad-bg);color:var(--bad);flex:0 1 auto}
+.hint{font-size:.85rem;color:var(--ink-3)}
+
+/* settings */
+.card{background:var(--paper);border:1px solid var(--rule);border-radius:16px;padding:16px;margin-top:14px}
+.card h3{font-size:1.05rem;margin-bottom:4px}
+.card .note{margin-bottom:12px}
+.dayrow{display:grid;grid-template-columns:48px 1fr;gap:10px;align-items:start;padding:10px 0;border-top:1px solid var(--rule)}
+.dayrow:first-of-type{border-top:0}
+.dayrow .dn{font-weight:700;padding-top:9px}
+.ranges{display:flex;flex-direction:column;gap:8px;min-width:0}
+.range{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.range input[type=time]{background:var(--bg);border:1.5px solid var(--rule);border-radius:8px;padding:7px 8px;font-variant-numeric:tabular-nums;max-width:124px}
+.range span{color:var(--ink-3)}
+.addr{border:0;background:transparent;color:var(--accent);font-weight:600;padding:6px 0;text-align:left;font-size:.9rem}
+.off{color:var(--ink-3);font-size:.9rem;padding-top:9px}
+.copy{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.copy button{border:0;background:transparent;color:var(--accent);font-weight:600;padding:4px 0;font-size:.9rem}
+textarea.code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;min-height:70px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:600;z-index:30;box-shadow:var(--shadow)}
+@media (prefers-reduced-motion:no-preference){.sheet{animation:up .22s ease-out}@keyframes up{from{transform:translateY(30px);opacity:0}}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div><div class="date" id="hdrDate">Hi, Towne</div><div class="love" id="hdrNote"></div><div class="sub" id="hdrSub"></div></div>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button role="tab" id="tab-plan" aria-selected="true" data-view="plan">Plan</button>
+      <button role="tab" id="tab-done" aria-selected="false" data-view="done">Done</button>
+      <button role="tab" id="tab-settings" aria-selected="false" data-view="settings">Free time</button>
+    </nav>
+  </header>
+  <main id="main"></main>
+</div>
+
+<button class="fab" id="fab" aria-label="Add assignment"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add</button>
+<div id="sheetHost"></div>
+<div id="toastHost"></div>
+
+<script>
+(() => {
+'use strict';
+const MIN = 60000, DAY = 86400000;
+const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const LS_KEY = 'townes-planner-v1';
+const PALETTE = ['#2f5bd9','#1f9d5a','#d9433b','#8b3fd9','#d98a0b','#0f8f9e','#d9479a','#6b7a1f','#b4552a','#4a4ae0'];
+
+// ───── state ─────
+const defaultSettings = () => ({
+  defaultMin: 45, bufferDays: 1, horizonDays: 7, minChunk: 30,
+  windows: { Mon:[['16:00','18:00'],['20:00','22:00']], Tue:[['16:00','18:00'],['20:00','22:00']], Wed:[['16:00','18:00'],['20:00','22:00']],
+             Thu:[['16:00','18:00'],['20:00','22:00']], Fri:[['16:00','18:00']], Sat:[['10:00','13:00']], Sun:[['13:00','17:00']] },
+});
+let state = { settings: defaultSettings(), assignments: [], classes: {} };
+let view = 'plan';
+let toastTimer = null;
+const NOTES = [
+  'Danil loves you very much',
+  'Danil is thinking about you right now',
+  'Danil has a surprise for you',
+  'Danil is so proud of you',
+  "Danil says you've got this",
+  "Danil can't wait to see you",
+  'Danil misses you already',
+  'Danil thinks you are the smartest person he knows',
+  'Danil made this just for you',
+  'Danil says take a break if you need one',
+  'Danil is cheering you on from wherever he is',
+];
+const NOTE = NOTES[Math.floor(Math.random() * NOTES.length)];
+const greeting = h => h < 12 ? 'Good morning, Towne' : h < 17 ? 'Good afternoon, Towne' : 'Good evening, Towne';
+
+function load() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) { const s = JSON.parse(raw); state = { settings: { ...defaultSettings(), ...s.settings }, assignments: s.assignments || [], classes: s.classes || {}, updatedAt: s.updatedAt || 0 }; }
+  } catch {}
+}
+function save() { state.updatedAt = Date.now(); try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch {} pushRemote(); }
+
+// ───── cloud sync (Firebase Firestore; the planner's key lives in the URL) ─────
+const FIREBASE_CONFIG = window.FIREBASE_CONFIG || null;
+let sync = { status: 'local', ref: null, pushTimer: null, writing: null, key: null };
+function syncLabel() {
+  return { local: 'Saved on this device only.', connecting: 'Connecting…', synced: 'Synced. Open this same link on any device to see the same planner.', error: 'Cloud sync is having trouble. Changes are safe on this device and will sync when it reconnects.', noconfig: 'Cloud sync is not set up yet (missing Firebase config).' }[sync.status];
+}
+function setSync(st) { if (sync.status !== st) { sync.status = st; const el = document.getElementById('syncStatus'); if (el) el.textContent = syncLabel(); } }
+function cleanState() { return { settings: state.settings, assignments: state.assignments, classes: state.classes, updatedAt: state.updatedAt || 0 }; }
+function pushRemote() {
+  if (!sync.ref) return;
+  clearTimeout(sync.pushTimer);
+  sync.pushTimer = setTimeout(() => {
+    const body = cleanState();
+    const run = () => sync.ref.set(body).then(() => setSync('synced')).catch(() => setSync('error'));
+    sync.writing = (sync.writing || Promise.resolve()).then(run, run);
+  }, 500);
+}
+function plannerKey() {
+  const m = location.hash.match(/p=([A-Za-z0-9_-]{16,})/);
+  if (m) { try { localStorage.setItem(LS_KEY + ':key', m[1]); } catch {} return m[1]; }
+  let k = null; try { k = localStorage.getItem(LS_KEY + ':key'); } catch {}
+  if (!k) { const a = new Uint8Array(18); crypto.getRandomValues(a); k = btoa(String.fromCharCode(...a)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); try { localStorage.setItem(LS_KEY + ':key', k); } catch {} }
+  history.replaceState(null, '', '#p=' + k);
+  return k;
+}
+function startSync() {
+  sync.key = plannerKey();
+  if (!FIREBASE_CONFIG || !window.firebase) { setSync('noconfig'); return; }
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    const db = firebase.firestore();
+    sync.ref = db.collection('planners').doc(sync.key);
+    setSync('connecting');
+    sync.ref.onSnapshot(snap => {
+      if (snap.metadata.fromCache && !snap.exists) return;
+      if (!snap.exists) { if (state.assignments.length || state.updatedAt) pushRemote(); else setSync('synced'); return; }
+      const remote = snap.data();
+      const rUp = +remote.updatedAt || 0, lUp = +state.updatedAt || 0;
+      if (rUp > lUp) {
+        state = { settings: { ...defaultSettings(), ...(remote.settings || {}) }, assignments: Array.isArray(remote.assignments) ? remote.assignments : [], classes: remote.classes || {}, updatedAt: rUp };
+        try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch {}
+        setSync('synced'); render();
+      } else if (lUp > rUp) pushRemote();
+      else setSync('synced');
+    }, () => setSync('error'));
+  } catch (e) { setSync('error'); }
+}
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+function classColor(name) {
+  if (!name) return 'var(--ink-3)';
+  const key = name.trim().toLowerCase();
+  if (!state.classes[key]) state.classes[key] = { name: name.trim(), color: PALETTE[Object.keys(state.classes).length % PALETTE.length] };
+  return state.classes[key].color;
+}
+
+// ───── time helpers ─────
+const startOfDay = d => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const dayIndex = (d, today0) => Math.round((startOfDay(d) - today0) / DAY);
+const hm = s => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
+function fmtTime(d) { let h = d.getHours(), m = d.getMinutes(); const ap = h < 12 ? 'AM' : 'PM'; h = h % 12 || 12; return m ? `${h}:${String(m).padStart(2,'0')} ${ap}` : `${h} ${ap}`; }
+function fmtRange(a, b) { const sa = fmtTime(a), sb = fmtTime(b); return (sa.slice(-2) === sb.slice(-2) ? sa.slice(0, -3) : sa) + '–' + sb; }
+function fmtDay(d) { return `${DAYS[d.getDay()]} ${d.getMonth() + 1}/${d.getDate()}`; }
+function fmtDur(m) { const h = Math.floor(m / 60), r = m % 60; return h && r ? `${h}h ${r}m` : h ? `${h}h` : `${r}m`; }
+function dueLabel(due, today0) {
+  const di = dayIndex(due, today0);
+  const t = fmtTime(due);
+  const d = di === 0 ? 'today' : di === 1 ? 'tomorrow' : di < 0 ? fmtDay(due) : di < 7 ? DAYS[due.getDay()] : fmtDay(due);
+  return `due ${d}${t === '11:59 PM' ? '' : ' ' + t}`;
+}
+
+// ───── scheduler (earliest deadline first, split across free blocks) ─────
+function buildSlots(now, s, days) {
+  const slots = [];
+  const nowR = new Date(Math.ceil(now / (5 * MIN)) * 5 * MIN);
+  for (let i = 0; i <= days; i++) {
+    const d0 = startOfDay(addDays(now, i));
+    for (const [a, b] of s.windows[DAYS[d0.getDay()]] || []) {
+      let st = new Date(d0.getTime() + hm(a) * MIN); const en = new Date(d0.getTime() + hm(b) * MIN);
+      if (en <= nowR) continue; if (st < nowR) st = nowR;
+      if (en - st >= s.minChunk * MIN) slots.push({ start: st, end: en });
+    }
+  }
+  return slots;
+}
+function schedule(tasks, s, now) {
+  const horizonEnd = new Date(now.getTime() + s.horizonDays * DAY);
+  const slots = buildSlots(now, s, s.horizonDays + 2);
+  const out = new Map();
+  const elig = tasks.filter(t => t.due <= horizonEnd).sort((a, b) => a.due - b.due || b.effort - a.effort);
+  for (const t of tasks) if (t.due > horizonEnd) out.set(t.id, { blocks: [], flag: null, left: t.effort });
+  const place = (remaining, limit) => {
+    const blocks = [];
+    for (const sl of slots) {
+      if (remaining <= 0 || sl.start >= limit) break;
+      const free = Math.floor((Math.min(sl.end, limit) - sl.start) / MIN);
+      if (free < s.minChunk && free < remaining) continue;
+      let take = Math.min(remaining, free);
+      const leftover = remaining - take;
+      if (leftover > 0 && leftover < s.minChunk) take = Math.max(s.minChunk, remaining - s.minChunk);
+      take = Math.min(take, free); if (take <= 0) continue;
+      const end = new Date(sl.start.getTime() + take * MIN);
+      blocks.push({ start: sl.start, end }); sl.start = end; remaining -= take;
+    }
+    return { blocks, remaining };
+  };
+  for (const t of elig) {
+    let flag = null, r;
+    if (t.due <= now) { flag = 'overdue'; r = place(t.effort, new Date(8.64e15)); }
+    else {
+      const soft = new Date(t.due.getTime() - s.bufferDays * DAY);
+      r = place(t.effort, soft > now ? soft : now);
+      if (r.remaining > 0) { flag = 'tight'; const r2 = place(r.remaining, t.due); r = { blocks: r.blocks.concat(r2.blocks), remaining: r2.remaining }; }
+      if (r.remaining > 0) flag = 'nofit';
+    }
+    for (let i = slots.length - 1; i >= 0; i--) if (slots[i].end - slots[i].start < s.minChunk * MIN) slots.splice(i, 1);
+    out.set(t.id, { blocks: r.blocks, flag, left: r.remaining });
+  }
+  return out;
+}
+
+// ───── rendering ─────
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const ICON = {
+  check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></svg>',
+  edit: '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+  undo: '<svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg>',
+};
+
+function render() {
+  const now = new Date(), today0 = startOfDay(now);
+  $('#hdrDate').textContent = view === 'plan' ? greeting(now.getHours()) : view === 'done' ? 'Done' : 'Free time';
+  $('#hdrNote').textContent = view === 'plan' ? NOTE : '';
+  if (view !== 'plan') $('#hdrSub').textContent = '';
+  document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === view)));
+  const main = $('#main');
+  if (view === 'plan') renderPlan(main, now, today0);
+  else if (view === 'done') renderDone(main, today0);
+  else renderSettings(main);
+}
+
+function renderPlan(main, now, today0) {
+  const s = state.settings;
+  const open = state.assignments.filter(a => !a.done).map(a => ({ ...a, due: new Date(a.due) }));
+  const plan = schedule(open, s, now);
+  const hasWindows = Object.values(s.windows).some(w => w.length);
+  const byDay = new Map();
+  let overdueCount = 0, nofit = [];
+  for (const t of open) {
+    const p = plan.get(t.id);
+    if (p.flag === 'overdue') overdueCount++;
+    if (p.flag === 'nofit') nofit.push({ t, p });
+    for (const b of p.blocks) { const k = dayIndex(b.start, today0); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push({ ...b, t, p }); }
+  }
+  const later = open.filter(t => !plan.get(t.id).blocks.length && !plan.get(t.id).flag);
+  const stuck = open.filter(t => !plan.get(t.id).blocks.length && plan.get(t.id).flag);
+  const todayMins = (byDay.get(0) || []).reduce((n, b) => n + (b.end - b.start) / MIN, 0);
+  const dateStr = `${DAYS[now.getDay()]}, ${now.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`;
+  $('#hdrSub').textContent = dateStr + ' · ' + (open.length === 0 ? 'nothing due' : todayMins ? `${fmtDur(todayMins)} of homework today` : `nothing planned today`);
+
+  let html = '';
+  if (!hasWindows) html += `<div class="banner warn"><span>⚠️</span><div><b>No free time set.</b> Tap <b>Free time</b> at the top and add the hours you can do homework.</div></div>`;
+  if (stuck.length) html += `<div class="banner bad"><span>⏰</span><div><b>${stuck.length} assignment${stuck.length > 1 ? 's' : ''} can't fit</b> before the due time. Add free time or shrink the estimate. (${stuck.map(t => esc(t.title)).join(', ')})</div></div>`;
+  else if (nofit.length) html += `<div class="banner warn"><span>⚠️</span><div><b>Not enough free time for everything.</b> ${nofit.map(x => `${esc(x.t.title)} is ${fmtDur(x.p.left)} short`).join('; ')}. Add free time or shrink the estimate.</div></div>`;
+
+  if (open.length === 0) {
+    html += `<div class="empty"><strong>Your week is clear</strong>Tap <b>Add</b> to put in an assignment with its due date, and it'll land here with a time to do it.</div>`;
+  }
+  const keys = [...byDay.keys()].sort((a, b) => a - b);
+  if (!keys.includes(0) && open.length) keys.unshift(0);
+  for (const k of keys) {
+    const items = (byDay.get(k) || []).sort((a, b) => a.start - b.start);
+    const d = addDays(today0, k);
+    const label = k === 0 ? 'Today' : k === 1 ? 'Tomorrow' : DAYS[d.getDay()];
+    const total = items.reduce((n, b) => n + (b.end - b.start) / MIN, 0);
+    html += `<section class="day"><h2>${label} <span class="meta">${fmtDay(d)}${total ? ' · ' + fmtDur(total) : ''}</span></h2>`;
+    if (!items.length) html += `<p class="note" style="margin:8px 0 0">Nothing scheduled. ${k === 0 && later.length ? 'Everything due is more than a week out.' : 'Enjoy it.'}</p>`;
+    else {
+      html += '<ul class="blocks">';
+      for (const b of items) {
+        const isNow = now >= b.start && now < b.end;
+        const parts = b.p.blocks.length > 1 ? ` · part ${b.p.blocks.findIndex(x => x.start.getTime() === b.start.getTime()) + 1} of ${b.p.blocks.length}` : '';
+        const flag = b.p.flag === 'overdue' ? '<span class="flag bad">overdue</span>' : b.p.flag ? '<span class="flag warn">tight</span>' : '';
+        html += `<li class="block${isNow ? ' now' : ''}">
+          <div class="time">${fmtRange(b.start, b.end)}<small>${fmtDur((b.end - b.start) / MIN)}${parts}</small></div>
+          <div class="what"><div class="title">${esc(b.t.title)} ${flag}</div>
+            <div class="cls"><span class="dot" style="--c:${classColor(b.t.cls)}"></span>${esc(b.t.cls || 'No class')} · ${dueLabel(b.t.due, today0)}</div></div>
+          <div class="actions"><button class="iconbtn" data-edit="${b.t.id}" aria-label="Edit">${ICON.edit}</button>
+            <button class="check" data-done="${b.t.id}" aria-label="Mark done">${ICON.check}</button></div></li>`;
+      }
+      html += '</ul>';
+    }
+    html += '</section>';
+  }
+  if (later.length) {
+    html += `<section class="day"><h2>Later <span class="meta">due more than ${s.horizonDays} days out</span></h2><ul class="blocks">`;
+    for (const t of later.sort((a, b) => a.due - b.due)) {
+      html += `<li class="block"><div class="time">${fmtDay(t.due)}<small>${fmtDur(t.effort)}</small></div>
+        <div class="what"><div class="title">${esc(t.title)}</div><div class="cls"><span class="dot" style="--c:${classColor(t.cls)}"></span>${esc(t.cls || 'No class')}</div></div>
+        <div class="actions"><button class="iconbtn" data-edit="${t.id}" aria-label="Edit">${ICON.edit}</button><button class="check" data-done="${t.id}" aria-label="Mark done">${ICON.check}</button></div></li>`;
+    }
+    html += '</ul></section>';
+  }
+  if (stuck.length) {
+    html += `<section class="day"><h2>Needs attention</h2><ul class="blocks">`;
+    for (const t of stuck) html += `<li class="block"><div class="time">${fmtDay(t.due)}<small>${fmtDur(t.effort)}</small></div>
+      <div class="what"><div class="title">${esc(t.title)} <span class="flag bad">no time</span></div><div class="cls"><span class="dot" style="--c:${classColor(t.cls)}"></span>${esc(t.cls || 'No class')} · ${dueLabel(t.due, today0)}</div></div>
+      <div class="actions"><button class="iconbtn" data-edit="${t.id}" aria-label="Edit">${ICON.edit}</button><button class="check" data-done="${t.id}" aria-label="Mark done">${ICON.check}</button></div></li>`;
+    html += '</ul></section>';
+  }
+  main.innerHTML = html;
+}
+
+function renderDone(main, today0) {
+  const done = state.assignments.filter(a => a.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+  if (!done.length) { main.innerHTML = `<div class="empty"><strong>Nothing finished yet</strong>Tap the circle next to an assignment when it's done and it moves here.</div>`; return; }
+  let html = '<ul class="blocks" style="margin-top:14px">';
+  for (const a of done) {
+    html += `<li class="block"><div class="time">${fmtDay(new Date(a.doneAt || a.due))}<small>finished</small></div>
+      <div class="what"><div class="title" style="text-decoration:line-through;color:var(--ink-2)">${esc(a.title)}</div><div class="cls"><span class="dot" style="--c:${classColor(a.cls)}"></span>${esc(a.cls || 'No class')}</div></div>
+      <div class="actions"><button class="iconbtn" data-undo="${a.id}" aria-label="Put back">${ICON.undo}</button></div></li>`;
+  }
+  main.innerHTML = html + '</ul>' + (done.length > 30 ? `<p class="note" style="margin-top:12px"><button class="addr" id="clearDone">Clear finished older than 30 days</button></p>` : '');
+}
+
+function renderSettings(main) {
+  const s = state.settings;
+  let html = `<div class="card"><h3>When can you do homework?</h3><p class="note">Put in the hours you're actually free. The planner only schedules inside these.</p>`;
+  for (const d of ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']) {
+    const r = s.windows[d] || [];
+    html += `<div class="dayrow"><div class="dn">${d}</div><div class="ranges">`;
+    if (!r.length) html += `<div class="off">Off</div>`;
+    r.forEach((w, i) => { html += `<div class="range"><input type="time" id="w-${d}-${i}-a" data-d="${d}" data-i="${i}" data-k="0" value="${w[0]}" step="300"><span>to</span><input type="time" id="w-${d}-${i}-b" data-d="${d}" data-i="${i}" data-k="1" value="${w[1]}" step="300"><button class="iconbtn" data-rm="${d}:${i}" aria-label="Remove">${'<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>'}</button></div>`; });
+    html += `<button class="addr" data-add="${d}">+ add a block</button></div></div>`;
+  }
+  html += `</div>
+  <div class="card"><h3>How it plans</h3>
+    <div class="row">
+      <div class="field"><label for="s-default">Default time per assignment</label><select id="s-default">${[15,30,45,60,90,120].map(v => `<option value="${v}"${s.defaultMin === v ? ' selected' : ''}>${fmtDur(v)}</option>`).join('')}</select></div>
+      <div class="field"><label for="s-buffer">Try to finish</label><select id="s-buffer">${[[0,'right at the deadline'],[1,'a day early'],[2,'two days early']].map(([v,l]) => `<option value="${v}"${s.bufferDays === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field"><label for="s-horizon">Plan ahead</label><select id="s-horizon">${[[3,'3 days'],[5,'5 days'],[7,'1 week'],[14,'2 weeks']].map(([v,l]) => `<option value="${v}"${s.horizonDays === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field"><label for="s-chunk">Shortest work block</label><select id="s-chunk">${[15,20,30,45].map(v => `<option value="${v}"${s.minChunk === v ? ' selected' : ''}>${v} min</option>`).join('')}</select></div>
+    </div></div>
+  <div class="card"><h3>Your link</h3><p class="note" id="syncStatus">${syncLabel()}</p>
+    <div class="field"><label for="share-url">Open this exact link on your phone and laptop</label><input id="share-url" readonly value="${esc(location.href)}">
+      <div class="copy"><button id="share-copy">Copy link</button></div></div>
+    <p class="hint">Bookmark it or add it to your home screen. Anyone with the link can see and edit this planner, so only share it with people you trust.</p></div>
+  <div class="card"><h3>Backup</h3><p class="note">Copy this code on one device and paste it on another to move your planner by hand.</p>
+    <div class="field"><label for="bk-out">Your backup code</label><textarea class="code" id="bk-out" readonly>${esc(btoa(unescape(encodeURIComponent(JSON.stringify(state)))))}</textarea>
+      <div class="copy"><button id="bk-copy">Copy code</button></div></div>
+    <div class="field"><label for="bk-in">Paste a backup code</label><textarea class="code" id="bk-in" placeholder="Paste here, then tap Restore"></textarea>
+      <div class="copy"><button id="bk-restore">Restore</button></div></div>
+  </div>`;
+  main.innerHTML = html;
+}
+
+// ───── add / edit sheet ─────
+function openSheet(id) {
+  const a = id ? state.assignments.find(x => x.id === id) : null;
+  const due = a ? new Date(a.due) : (() => { const d = addDays(startOfDay(new Date()), 1); d.setHours(23, 59); return d; })();
+  const classes = Object.values(state.classes).map(c => c.name);
+  const host = $('#sheetHost');
+  const pad = n => String(n).padStart(2, '0');
+  host.innerHTML = `<div class="scrim" id="scrim"></div>
+  <div class="sheet" role="dialog" aria-labelledby="sh-title"><div class="inner"><div class="grab"></div>
+    <h2 id="sh-title">${a ? 'Edit assignment' : 'New assignment'}</h2>
+    <form id="form">
+      <div class="field"><label for="f-title">What is it?</label><input id="f-title" required placeholder="e.g. Lab report 3" value="${a ? esc(a.title) : ''}" autocomplete="off"></div>
+      <div class="field"><label for="f-cls">Class</label><input id="f-cls" list="cls-list" placeholder="e.g. Physics" value="${a ? esc(a.cls || '') : ''}" autocomplete="off"><datalist id="cls-list">${classes.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <div class="row">
+        <div class="field"><label for="f-date">Due date</label><input type="date" id="f-date" required value="${due.getFullYear()}-${pad(due.getMonth()+1)}-${pad(due.getDate())}"></div>
+        <div class="field"><label for="f-time">Due time</label><input type="time" id="f-time" value="${pad(due.getHours())}:${pad(due.getMinutes())}"></div>
+      </div>
+      <div class="field"><label>How long will it take?</label><div class="chips" id="chips">${[15,30,45,60,90,120,180].map(v => `<button type="button" class="chip" data-min="${v}" aria-pressed="${(a ? a.effort : state.settings.defaultMin) === v}">${fmtDur(v)}</button>`).join('')}</div>
+        <span class="hint">Guess high. It's easier to finish early than to run out of time.</span></div>
+      <div class="field"><label for="f-notes">Notes (optional)</label><textarea id="f-notes" rows="2">${a ? esc(a.notes || '') : ''}</textarea></div>
+      <div class="btns"><button type="submit" class="btn primary">${a ? 'Save' : 'Add it'}</button><button type="button" class="btn ghost" id="sh-cancel">Cancel</button>${a ? `<button type="button" class="btn danger" id="sh-delete">Delete</button>` : ''}</div>
+    </form></div></div>`;
+  let effort = a ? a.effort : state.settings.defaultMin;
+  $('#chips').addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; effort = +b.dataset.min; $('#chips').querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c === b))); });
+  const close = () => { host.innerHTML = ''; };
+  $('#scrim').onclick = close; $('#sh-cancel').onclick = close;
+  if (a) $('#sh-delete').onclick = () => { state.assignments = state.assignments.filter(x => x.id !== a.id); save(); close(); render(); toast('Deleted'); };
+  $('#form').onsubmit = e => {
+    e.preventDefault();
+    const [y, m, d] = $('#f-date').value.split('-').map(Number);
+    const [hh, mm] = ($('#f-time').value || '23:59').split(':').map(Number);
+    const dueD = new Date(y, m - 1, d, hh, mm);
+    const cls = $('#f-cls').value.trim();
+    if (cls) classColor(cls);
+    const rec = { id: a ? a.id : uid(), title: $('#f-title').value.trim(), cls, due: dueD.toISOString(), effort, notes: $('#f-notes').value.trim(), done: a ? a.done : false, doneAt: a ? a.doneAt : null };
+    if (a) Object.assign(a, rec); else state.assignments.push(rec);
+    save(); close(); view = 'plan'; render(); toast(a ? 'Saved' : 'Added and scheduled');
+  };
+  setTimeout(() => $('#f-title').focus(), 50);
+}
+
+function toast(msg) {
+  const h = $('#toastHost'); h.innerHTML = `<div class="toast">${esc(msg)}</div>`;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { h.innerHTML = ''; }, 1800);
+}
+
+// ───── events ─────
+document.addEventListener('click', e => {
+  const t = e.target.closest('button'); if (!t) return;
+  if (t.dataset.view) { view = t.dataset.view; render(); return; }
+  if (t.id === 'fab') { openSheet(null); return; }
+  if (t.dataset.edit) { openSheet(t.dataset.edit); return; }
+  if (t.dataset.done) { const a = state.assignments.find(x => x.id === t.dataset.done); if (a) { a.done = true; a.doneAt = Date.now(); save(); render(); toast('Done ✓'); } return; }
+  if (t.dataset.undo) { const a = state.assignments.find(x => x.id === t.dataset.undo); if (a) { a.done = false; a.doneAt = null; save(); render(); } return; }
+  if (t.id === 'clearDone') { const cut = Date.now() - 30 * DAY; state.assignments = state.assignments.filter(a => !a.done || (a.doneAt || 0) > cut); save(); render(); return; }
+  if (t.dataset.add) { (state.settings.windows[t.dataset.add] ||= []).push(['16:00', '18:00']); save(); render(); return; }
+  if (t.dataset.rm) { const [d, i] = t.dataset.rm.split(':'); state.settings.windows[d].splice(+i, 1); save(); render(); return; }
+  if (t.id === 'share-copy') { navigator.clipboard.writeText(location.href).then(() => toast('Link copied')).catch(() => { $('#share-url').select(); toast('Select and copy the link'); }); return; }
+  if (t.id === 'bk-copy') { const txt = $('#bk-out').value; navigator.clipboard.writeText(txt).then(() => toast('Copied')).catch(() => { $('#bk-out').select(); toast('Select and copy the code'); }); return; }
+  if (t.id === 'bk-restore') {
+    try { const s = JSON.parse(decodeURIComponent(escape(atob($('#bk-in').value.trim())))); if (!s || !Array.isArray(s.assignments)) throw 0;
+      state = { settings: { ...defaultSettings(), ...s.settings }, assignments: s.assignments, classes: s.classes || {}, updatedAt: 0 }; save(); render(); toast('Restored'); }
+    catch { toast("That code didn't work. Copy the whole thing."); }
+    return;
+  }
+});
+document.addEventListener('change', e => {
+  const el = e.target;
+  if (el.dataset.d !== undefined && el.type === 'time') {
+    const w = state.settings.windows[el.dataset.d][+el.dataset.i]; w[+el.dataset.k] = el.value || w[+el.dataset.k];
+    if (hm(w[1]) <= hm(w[0])) { w[1] = w[0] === '23:30' ? '23:59' : `${String(Math.min(23, Math.floor(hm(w[0]) / 60) + 1)).padStart(2,'0')}:${String(hm(w[0]) % 60).padStart(2,'0')}`; toast('End moved after start'); }
+    save(); render(); return;
+  }
+  const map = { 's-default': 'defaultMin', 's-buffer': 'bufferDays', 's-horizon': 'horizonDays', 's-chunk': 'minChunk' };
+  if (map[el.id]) { state.settings[map[el.id]] = +el.value; save(); render(); }
+});
+
+load();
+plannerKey();
+render();
+startSync();
+setInterval(render, 60 * 1000); // keep "now" highlight and today's slots fresh
+document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+})();
+</script>
+</body>
+</html>
