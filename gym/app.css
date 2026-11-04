@@ -86,12 +86,13 @@ img,canvas,svg{max-width:100%}
   font-size:.65rem;font-weight:700;min-width:16px;height:16px;border-radius:9px;display:grid;place-items:center;padding:0 4px}
 
 /* bottom tabs (mobile) */
-.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:25;display:grid;grid-template-columns:repeat(5,1fr);
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:25;display:grid;grid-template-columns:repeat(6,1fr);
   background:var(--surface);background:color-mix(in srgb,var(--surface) 97%,transparent);backdrop-filter:saturate(1.2) blur(14px);
   border-top:1px solid var(--hair);padding-bottom:env(safe-area-inset-bottom,0px)}
 .tabbar .brand{display:none}
-.tabbar button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 2px 7px;color:var(--ink-3);font-size:.66rem;font-weight:600;letter-spacing:.01em}
-.tabbar button svg{width:22px;height:22px;stroke:currentColor;stroke-width:1.8;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.tabbar button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 1px 7px;color:var(--ink-3);font-size:.62rem;font-weight:600;letter-spacing:0;min-width:0}
+.tabbar button span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tabbar button svg{width:21px;height:21px;stroke:currentColor;stroke-width:1.8;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .tabbar button[aria-current="page"]{color:var(--accent)}
 .tabbar button .dotflag{width:5px;height:5px;border-radius:50%;background:var(--critical);position:absolute;transform:translate(11px,-2px)}
 
@@ -299,6 +300,7 @@ pre.code{background:var(--surface-2);border:1px solid var(--hair);border-radius:
   .tabbar .brand .m{width:28px;height:28px;border-radius:9px;background:var(--accent);display:grid;place-items:center;flex:none}
   .tabbar .brand .m svg{width:17px;height:17px;stroke:var(--accent-ink);stroke-width:2.2;fill:none}
   .tabbar button{flex-direction:row;justify-content:flex-start;gap:11px;padding:10px 11px;border-radius:11px;font-size:.92rem}
+  .tabbar button svg{width:20px;height:20px}
   .tabbar button[aria-current="page"]{background:var(--surface-2)}
   .tabbar button .dotflag{position:static;transform:none;margin-left:auto}
   .topbar{top:0}

@@ -42,7 +42,7 @@ FIT.MAIN = (() => {
     }, 30000);
 
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) { U.render(); checkReminders(); }
+      if (!document.hidden) { U.render(); checkReminders(); maybeWeeklyList(); }
     });
 
     window.addEventListener('beforeinstallprompt', function (e) {
@@ -58,6 +58,26 @@ FIT.MAIN = (() => {
     }
 
     startReminders();
+    setTimeout(maybeWeeklyList, 1500);
+  }
+
+  /* The first time either of them opens the app in a new week, put that
+     week's grocery list in front of them. Once a week, never twice. */
+  function maybeWeeklyList() {
+    try {
+      if (!S.state.me) return;
+      const d = S.me();
+      if (!d.profile.setupDone) return;
+      if (U.h.ui.sheet || U.h.ui.onboard) return;
+      const today = N.todayStr();
+      if (!FIT.GROCERY.dueThisWeek(today)) return;
+      const l = FIT.GROCERY.list(FIT.GROCERY.weekStart(today), 7);
+      FIT.GROCERY.markShown(today);          /* shown once a week, however it is dismissed */
+      if (!l.toBuy.length) return;
+      U.h.ui.sheet = { name: 'weeklist' };
+      U.render();
+      notify('This week\u2019s grocery list', l.toBuy.length + ' things to pick up, built from your meal plans.', 'grocery');
+    } catch (e) { /* never let the popup break the app */ }
   }
 
   /* =======================================================================
@@ -68,7 +88,7 @@ FIT.MAIN = (() => {
      ======================================================================= */
   function startReminders() {
     clearInterval(reminderTimer);
-    reminderTimer = setInterval(checkReminders, 60000);
+    reminderTimer = setInterval(function () { checkReminders(); maybeWeeklyList(); }, 60000);
     setTimeout(checkReminders, 4000);
   }
 
@@ -128,6 +148,12 @@ FIT.MAIN = (() => {
       notify(S.DISPLAY[pk] + ' missed something yesterday',
         C.missLabel(misses[0].items) + '. Worth a nudge — the supportive kind.', 'partner');
     }
+    /* weekly list reminder, once a week, only if they have not seen it */
+    if (FIT.GROCERY.dueThisWeek(date) && !already(FIT.GROCERY.weekKey(date) + ':grocery')) {
+      const gl = FIT.GROCERY.list(FIT.GROCERY.weekStart(date), 7);
+      if (gl.toBuy.length) notify('Grocery list for this week', gl.toBuy.length + ' things to pick up.', 'grocery');
+    }
+
     const nudges = S.incomingNudges();
     if (nudges.length) {
       const last = nudges[nudges.length - 1];
@@ -166,5 +192,5 @@ FIT.MAIN = (() => {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 
-  return { enableNotifications: enableNotifications, install: install, checkReminders: checkReminders, applyTheme: applyTheme };
+  return { enableNotifications: enableNotifications, install: install, checkReminders: checkReminders, applyTheme: applyTheme, maybeWeeklyList: maybeWeeklyList };
 })();

@@ -24,6 +24,8 @@ FIT.AUTH = (() => {
     needsClaim: false,
     claimOptions: [],
     error: '',
+    blocked: false,         /* signed in, but the database will not answer */
+    allowOffline: false,
     reason: ''              /* why we are in passcode mode, if we are */
   };
 
@@ -107,7 +109,8 @@ FIT.AUTH = (() => {
 
   async function resolvePerson(user) {
     /* give the snapshots a beat to arrive so we do not claim a taken slot */
-    await waitForDocs(2500);
+    await waitForDocs(3000);
+    api.blocked = false;
     for (const p of S.PEOPLE) {
       if (slotOwner(p) === user.uid) {
         api.person = p; api.needsClaim = false; S.setMe(p);
@@ -122,6 +125,19 @@ FIT.AUTH = (() => {
       }
     }
     const free = S.PEOPLE.filter(p => !slotOwner(p));
+
+    /* Nothing claimed AND the database is not answering: this is almost
+       always an existing user on a new device, not a new user. Offering the
+       setup wizard here is what silently creates a second, unsynced copy. */
+    const syncLive = S.state.sync.status === 'live';
+    if (!syncLive && free.length === S.PEOPLE.length && !api.allowOffline) {
+      api.blocked = true;
+      api.needsClaim = false;
+      api.person = null;
+      api.claimOptions = free;
+      return null;
+    }
+
     api.claimOptions = free;
     api.needsClaim = free.length > 0;
     api.person = null;
@@ -208,6 +224,7 @@ FIT.AUTH = (() => {
     try { sessionStorage.removeItem(`fit:${S.CREW}:unlocked`); } catch (e) {}
     if (api.mode === 'firebase') { try { await firebase.auth().signOut(); } catch (e) {} }
     api.person = null; api.user = null; api.needsClaim = false;
+    api.blocked = false; api.allowOffline = false;
     S.stopSync();
     emit();
   }

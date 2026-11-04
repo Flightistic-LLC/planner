@@ -39,13 +39,16 @@ FIT.UI = FIT.UI || {};
     scale: svg('<rect x="3" y="4" width="18" height="17" rx="3"/><path d="M8.5 11 12 8.2l3.5 2.8M7 15.5h10"/>'),
     back: svg('<path d="M15 5l-7 7 7 7"/>'),
     copy: svg('<rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-7A2.5 2.5 0 0 0 3 5.5v7A2.5 2.5 0 0 0 5.5 15"/>'),
-    exit: svg('<path d="M15 12H3M7 8l-4 4 4 4M13 3h5a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3h-5"/>')
+    exit: svg('<path d="M15 12H3M7 8l-4 4 4 4M13 3h5a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3h-5"/>'),
+    cart: svg('<circle cx="9.5" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2.5 3h2.2l2.6 12.2a1.6 1.6 0 0 0 1.6 1.3h8.7a1.6 1.6 0 0 0 1.6-1.3L21 7H6"/>'),
+    minus: svg('<path d="M5 12h14"/>')
   };
 
   const TABS = [
     { k: 'today', label: 'Today', icon: ICON.today },
     { k: 'plan', label: 'Plan', icon: ICON.plan },
     { k: 'food', label: 'Food', icon: ICON.food },
+    { k: 'grocery', label: 'Grocery', icon: ICON.cart },
     { k: 'progress', label: 'Progress', icon: ICON.chart },
     { k: 'us', label: 'Us', icon: ICON.us }
   ];
@@ -100,7 +103,13 @@ FIT.UI = FIT.UI || {};
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && ui.sheet) { ui.sheet = null; render(); }
     });
-    S.on('change', function () { render(); });
+    S.on('change', function (e) {
+      if (e && e.from === 'merge' && e.gained > 0) {
+        toast('Synced \u2014 ' + e.gained + ' day' + (e.gained === 1 ? '' : 's') + ' of ' +
+          S.DISPLAY[e.person] + '\u2019s history came back.', 5000);
+      }
+      render();
+    });
     S.on('sync', chrome);
     A.on(function (st) {
       if (st && !st.user && st.mode === 'firebase') { ui.login.busy = false; ui.login.person = null; }
@@ -149,6 +158,7 @@ FIT.UI = FIT.UI || {};
      Login — two accounts
      ======================================================================= */
   function loginView() {
+    if (A.blocked) return blockedView();
     if (A.mode === 'passcode') return passcodeView();
     if (A.needsClaim) return claimView();
 
@@ -175,6 +185,35 @@ FIT.UI = FIT.UI || {};
         '</div>' +
       '</form>' +
       '<p class="xs dim" style="text-align:center">Two accounts, one planner. Whoever signs in first picks their name.</p>' +
+      '</div></div>';
+  }
+
+  /* Signed in, but the database will not answer. Setting them up fresh here
+     would quietly create a second, unsynced copy of their planner — which is
+     exactly the bug they hit. So stop, explain, and offer the real fix. */
+  function blockedView() {
+    return '<div class="login"><div class="box">' +
+      '<div class="mark" style="background:var(--critical)">' + ICON.alert + '</div>' +
+      '<h1 style="text-align:center">Can\u2019t reach your data</h1>' +
+      '<p class="muted small" style="text-align:center">You are signed in' +
+        (A.user && A.user.email ? ' as ' + esc(A.user.email) : '') +
+        ', but the database is refusing to load your planner.</p>' +
+      '<div class="banner critical"><span class="ic">' + ICON.alert + '</span><div>' +
+        '<b>Setting you up again here would make a second, separate copy</b> that never syncs with your phone. ' +
+        'So this screen stops instead.</div></div>' +
+      '<div class="card tight"><div class="eyebrow">The fix — about a minute</div>' +
+        '<p class="small" style="margin:6px 0">In the Firebase console, open <b>Firestore Database → Rules</b>, ' +
+        'replace what is there with the rules below, and press <b>Publish</b>.</p>' +
+        '<pre class="code" id="rulesBlocked">' + esc(S.RULES_AUTH) + '</pre>' +
+        '<button class="btn sm" data-act="copy" data-from="#rulesBlocked">' + ICON.copy + ' Copy the rules</button>' +
+      '</div>' +
+      '<button class="btn primary full" data-act="retry-sync" style="margin-top:10px">Try again</button>' +
+      '<div class="row" style="justify-content:space-between;margin-top:12px">' +
+        '<button class="linkbtn" data-act="sync-anyway">Use this device offline</button>' +
+        '<button class="linkbtn" data-act="signout">Sign out</button>' +
+      '</div>' +
+      '<p class="xs dim" style="margin-top:10px">Offline mode keeps everything on this phone only \u2014 nothing you log ' +
+      'there reaches the other person until the rules are published.</p>' +
       '</div></div>';
   }
 
@@ -465,10 +504,16 @@ FIT.UI = FIT.UI || {};
       A.signOut().then(function () { ui.login = { mode: 'signin', person: null, msg: '' }; ui.sheet = null; render(); });
     },
     'pc-person': function (t) { ui.login.person = t.getAttribute('data-p') || null; ui.login.msg = ''; render(); },
+    'sync-anyway': function () { A.blocked = false; A.allowOffline = true; A.needsClaim = (A.claimOptions || []).length > 0; render(); },
 
     'welcome-done': function () { S.markSeen('welcome'); ui.onboard = { step: 0 }; render(); },
     'ob-back': function () { ui.onboard.step = Math.max(0, ui.onboard.step - 1); render(); },
-    'ob-finish': function () { ui.onboard = null; ui.tab = 'today'; S.setProfile({ setupDone: true }); render(); },
+    'ob-finish': function () {
+      ui.onboard = null; ui.tab = 'today';
+      S.setProfile({ setupDone: true });
+      render();
+      setTimeout(function () { if (FIT.MAIN) FIT.MAIN.maybeWeeklyList(); }, 900);
+    },
     'food-toggle': function (t) {
       S.toggleFood(t.getAttribute('data-id'));
       if (ui.onboard) render();
@@ -550,6 +595,7 @@ FIT.UI = FIT.UI || {};
       S.setProfile({ defaultBudget: +data.budget || 60, setupDone: !toFood });
       if (!toFood) ui.tab = 'today';
       render();
+      if (!toFood) setTimeout(function () { if (FIT.MAIN) FIT.MAIN.maybeWeeklyList(); }, 900);
     }
   };
 

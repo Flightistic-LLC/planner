@@ -131,11 +131,42 @@ FIT.NUTRITION = (() => {
   }
 
   function sumMacros(list) {
-    const t = { kcal: 0, p: 0, c: 0, fat: 0, na: 0, fib: 0 };
-    for (const m of list) { t.kcal += m.kcal; t.p += m.p; t.c += m.c; t.fat += m.fat; t.na += m.na; t.fib += m.fib; }
+    const t = { kcal: 0, p: 0, c: 0, fat: 0, na: 0, fib: 0, sug: 0, caf: 0 };
+    for (const m of list) {
+      t.kcal += m.kcal; t.p += m.p; t.c += m.c; t.fat += m.fat;
+      t.na += m.na; t.fib += m.fib; t.sug += (m.sug || 0); t.caf += (m.caf || 0);
+    }
     for (const k in t) t[k] = Math.round(t[k] * 10) / 10;
-    t.kcal = Math.round(t.kcal); t.na = Math.round(t.na);
+    t.kcal = Math.round(t.kcal); t.na = Math.round(t.na); t.caf = Math.round(t.caf);
     return t;
+  }
+
+  /* ---- seeded shuffle, so a week's meals are varied but reproducible on
+     both phones ---- */
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function shuffled(list, seedStr) {
+    const rnd = mulberry32(seed(seedStr));
+    const a = list.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+
+  /* Extras: drinks and the odd yogurt cup, logged beside the three meals. */
+  function extrasList(extras, allowed) {
+    const allow = new Set(allowed);
+    return Object.keys(extras || {})
+      .filter(id => (extras[id] > 0) && allow.has(id) && FOODS.items[id])
+      .map(id => ({ id, q: extras[id], name: FOODS.name(id), label: FOODS.qtyLabel(id, extras[id]), m: FOODS.macros(id, extras[id]) }));
   }
 
   /* =======================================================================
@@ -155,11 +186,19 @@ FIT.NUTRITION = (() => {
       return built;
     }).sort((a, b) => a.score - b.score);
 
-    /* Everything within a quarter-point of the best is "good enough"; rotate
-       through that set by date so meals vary without ever going off-plan. */
-    const good = scored.filter(b => b.score <= scored[0].score + 0.25);
-    const idx = (dayNumber(dateStr) + seed(person + meal) % 7) % good.length;
-    const pick = good[idx];
+    /* Everything close to the best fit is "good enough". Each week gets its
+       own shuffle of that set and the day of the week picks from it, so with
+       seven or more candidates nothing repeats inside a week, and next week
+       lands in a different order. */
+    /* Take the seven best fits rather than only the near-ties, so a full week
+       can be seven different meals. Anything genuinely wrong for the target
+       (way off on calories, or far short on protein) is still excluded. */
+    const good = scored.filter(b => b.score <= scored[0].score + 1.0).slice(0, 7);
+    const dn = dayNumber(dateStr);
+    const weekIdx = Math.floor(dn / 7);
+    const dow = ((dn % 7) + 7) % 7;
+    const order = shuffled(good, person + ':' + meal + ':' + weekIdx);
+    const pick = order[dow % order.length];
     pick.meal = meal;
     pick.label = MEAL_LABEL[meal];
     pick.kcalTarget = Math.round(kcalTarget);
@@ -168,7 +207,7 @@ FIT.NUTRITION = (() => {
     return pick;
   }
 
-  function planDay(person, dateStr, tgt, allowed, overrides) {
+  function planDay(person, dateStr, tgt, allowed, overrides, extras) {
     overrides = overrides || {};
     const meals = {};
     for (const meal of ['b', 'l', 'd']) {
@@ -182,9 +221,11 @@ FIT.NUTRITION = (() => {
       meals[meal] = built || planMeal(person, dateStr, meal, kcalT, pT, allowed);
     }
     const present = ['b', 'l', 'd'].filter(m => meals[m]);
-    const totals = sumMacros(present.flatMap(m => meals[m].items.map(i => i.m)));
+    const ex = extrasList(extras, allowed);
+    const mealTotals = sumMacros(present.flatMap(m => meals[m].items.map(i => i.m)));
+    const totals = sumMacros(present.flatMap(m => meals[m].items.map(i => i.m)).concat(ex.map(e => e.m)));
     return {
-      meals, totals,
+      meals, totals, mealTotals, extras: ex,
       kcalTarget: tgt.intake,
       proteinTarget: tgt.protein.target,
       kcalDelta: totals.kcal - tgt.intake,
@@ -294,6 +335,7 @@ FIT.NUTRITION = (() => {
 
   return {
     MEAL_SPLIT, MEAL_LABEL, targets, planDay, planMeal, scaleTemplate, sumMacros,
+    extrasList, shuffled, seed,
     proteinFeasibility, proteinCeiling, cdcGapCheck,
     todayStr, addDays, daysBetween, weeksBetween, clamp, dayNumber
   };

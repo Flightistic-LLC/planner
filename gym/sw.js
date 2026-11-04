@@ -1,10 +1,10 @@
 /* Service worker: cache the app shell so the planner opens and works with no
    signal. Firebase traffic always goes to the network. */
-const CACHE = 'dt-fit-v1';
+const CACHE = 'dt-fit-v2';
 const SHELL = [
   './', 'index.html', 'app.css', 'manifest.webmanifest',
   'js/cdc.js', 'js/foods.js', 'js/exercises.js', 'js/nutrition.js', 'js/program.js',
-  'js/coach.js', 'js/store.js', 'js/auth.js', 'js/charts.js', 'js/ui.js', 'js/views.js', 'js/main.js',
+  'js/coach.js', 'js/grocery.js', 'js/store.js', 'js/auth.js', 'js/charts.js', 'js/ui.js', 'js/views.js', 'js/main.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'
 ];
 

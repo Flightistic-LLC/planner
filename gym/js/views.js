@@ -17,6 +17,7 @@
     if (tab === 'today') return h.greet() + ', ' + v.name.split(' ')[0];
     if (tab === 'plan') return 'The plan';
     if (tab === 'food') return 'Food';
+    if (tab === 'grocery') return 'Grocery';
     if (tab === 'progress') return 'Progress';
     return 'Us';
   };
@@ -24,6 +25,10 @@
     if (tab === 'today') return h.prettyDate(ui.date) + ' · ' + v.session.focusLabel + ' · ' + mins(v.session.totalMinutes);
     if (tab === 'plan') return 'Seven days, built around your time';
     if (tab === 'food') return v.tgt.ok ? kk(v.tgt.intake) + ' kcal · ' + v.tgt.protein.target + ' g protein today' : 'Add your height and age';
+    if (tab === 'grocery') {
+      const l = FIT.GROCERY.list(FIT.GROCERY.weekStart(ui.date), 7);
+      return l.toBuy.length ? l.toBuy.length + ' things to buy this week' : 'The kitchen covers this week';
+    }
     if (tab === 'progress') return 'Both of you, honestly';
     return 'Accountability, both directions';
   };
@@ -32,6 +37,7 @@
     if (tab === 'today') return todayTab(v);
     if (tab === 'plan') return planTab(v);
     if (tab === 'food') return foodTab(v);
+    if (tab === 'grocery') return groceryTab(v);
     if (tab === 'progress') return progressTab(v);
     return usTab(v);
   };
@@ -50,7 +56,7 @@
     });
     maybeAutoAdjust(v, sum);
 
-    let out = '';
+    let out = syncBanner();
     if (v.key === 'towne') out += loveCard(date);
     out += checkInCard(v, sum);
     out += sum.locked ? lockedSummary() : summaryCard(v, sum);
@@ -58,6 +64,20 @@
     out += mealsCard(v);
     out += partnerStrip(v);
     return out;
+  }
+
+  /* If the database is refusing, say so where it will actually be seen. */
+  function syncBanner() {
+    const st = S.state.sync.status;
+    if (st === 'live' || st === 'connecting') return '';
+    const offline = st === 'offline';
+    return '<div class="banner ' + (offline ? 'neutral' : 'critical') + '" style="margin-top:14px">' +
+      '<span class="ic">' + (offline ? ICON.info : ICON.alert) + '</span><div>' +
+      (offline
+        ? '<b>Offline.</b> Everything is saved here and will sync when you are back on.'
+        : '<b>Not syncing.</b> This phone is keeping its own copy, and ' + esc(S.DISPLAY[S.partnerKey()]) +
+          ' cannot see any of it. <button class="linkbtn" data-act="sheet" data-v="sync">How to fix it</button>') +
+      '</div></div>';
   }
 
   function loveCard(date) {
@@ -280,6 +300,8 @@
         '</div>';
     });
 
+    out += extrasRow(v);
+
     if (plan.topUp && !plan.topUp.none) {
       out += '<div class="banner warning"><span class="ic">' + ICON.alert + '</span><div><b>' + plan.topUp.short +
         ' g of protein short today.</b> Add ' + esc(plan.topUp.label) + ' of ' + esc(plan.topUp.name) +
@@ -287,6 +309,38 @@
     }
     out += '<button class="btn full" data-act="tab" data-v="food" style="margin-top:4px">See the full breakdown and why</button>';
     return out + '</section>';
+  }
+
+  /* Drinks and the odd yogurt cup: counted, never planned. */
+  function extrasRow(v) {
+    const snacks = v.data.allowedFoods.filter(function (id) {
+      const f = FOODS.items[id];
+      return f && f.snack;
+    });
+    if (!snacks.length) return '';
+    const logged = v.rec.extras || {};
+    const ex = v.meals ? v.meals.extras : [];
+    const caf = ex.reduce(function (s2, e) { return s2 + (e.m.caf || 0); }, 0);
+    const kcal = ex.reduce(function (s2, e) { return s2 + e.m.kcal; }, 0);
+
+    return '<div class="hr"></div><div class="eyebrow">Drinks &amp; extras today</div>' +
+      '<p class="xs dim" style="margin:4px 0 8px">These count toward your day but are never planned for you.</p>' +
+      snacks.map(function (id) {
+        const f = FOODS.items[id];
+        const n = logged[id] || 0;
+        return '<div class="checkrow" style="padding:8px 0">' +
+          '<div class="body"><div class="ttl">' + esc(f.name) + '</div>' +
+          '<div class="xs dim">' + Math.round(f.kcal) + ' kcal' + (f.p >= 1 ? ' \u00b7 ' + f.p + ' g protein' : '') +
+            (f.caf ? ' \u00b7 ' + f.caf + ' mg caffeine' : '') + ' each</div></div>' +
+          '<div class="row" style="gap:6px">' +
+            '<button class="iconbtn" data-act="extra" data-id="' + id + '" data-d="-1" aria-label="One fewer"' + (n ? '' : ' disabled') + '>' + ICON.minus + '</button>' +
+            '<b class="num" style="min-width:18px;text-align:center">' + n + '</b>' +
+            '<button class="iconbtn" data-act="extra" data-id="' + id + '" data-d="1" aria-label="One more">' + ICON.plus + '</button>' +
+          '</div></div>';
+      }).join('') +
+      (kcal ? '<p class="xs dim">Extras today: ' + kk(kcal) + ' kcal' + (caf ? ', ' + kk(caf) + ' mg caffeine' : '') + '.' +
+        (caf > 400 ? ' <b style="color:var(--critical)">That is past the 400 mg a day FDA names as the ceiling for healthy adults.</b>' :
+         caf >= 200 ? ' One more can would reach the 400 mg daily ceiling.' : '') + '</p>' : '');
   }
 
   /* ---------------- partner strip ---------------- */
@@ -518,6 +572,190 @@
     out += '<section class="card">' + h.foodSetupBody(false) + '</section>';
     out += sourcesCard();
     return out;
+  }
+
+
+  /* =======================================================================
+     GROCERY
+     ======================================================================= */
+  function groceryTab(v) {
+    const G = FIT.GROCERY;
+    const from = G.weekStart(ui.date);
+    const l = G.list(from, 7);
+    const end = N.addDays(from, 6);
+    const pan = S.pantry();
+
+    let out = '<section class="card">' +
+      '<header><div><div class="eyebrow">' + esc(G.pretty(from)) + ' \u2014 ' + esc(G.pretty(end)) + '</div>' +
+      '<h2>' + (l.toBuy.length ? l.toBuy.length + ' to buy' : 'Nothing to buy') + '</h2></div>' +
+      '<span class="pill ' + (l.toBuy.length ? 'warning' : 'good') + '">' +
+        (l.toBuy.length ? ICON.cart : ICON.check) + (l.toBuy.length || 'all set') + '</span></header>' +
+      '<p class="small muted">Worked out from the next seven days of both your meal plans, minus what the kitchen already has. ' +
+      'Meals you have already ticked off are not counted again.</p>' +
+      '<div class="row wrap" style="margin-top:10px">' +
+        '<button class="btn sm" data-act="grocery-copy">' + ICON.copy + ' Copy list</button>' +
+        '<button class="btn sm" data-act="grocery-share">' + ICON.share + ' Share</button>' +
+        '<button class="btn sm" data-act="grocery-mail">Email it</button>' +
+      '</div>';
+
+    if (!l.toBuy.length) {
+      out += '<div class="banner good" style="margin-bottom:0"><span class="ic">' + ICON.check + '</span><div>' +
+        'Everything this week\u2019s meals need is already counted in the kitchen. Mark something low below and it will appear here.</div></div>';
+    } else {
+      G.byAisle(l.toBuy).forEach(function (a) {
+        out += '<div class="hr"></div><div class="eyebrow">' + esc(a.label) + '</div>' +
+          a.rows.map(function (r) { return buyRow(r); }).join('');
+      });
+    }
+    out += '</section>';
+
+    /* what is in the kitchen */
+    const tracked = l.rows.filter(function (r) { return r.tracked; });
+    out += '<section class="card">' +
+      '<header><div><div class="eyebrow">The kitchen</div><h2>What you have</h2></div></header>' +
+      '<p class="small muted">Put in what you have after a shop and the list does the subtraction for you. ' +
+      'Ticking a meal off takes it back out automatically.</p>' +
+      (tracked.length
+        ? tracked.map(function (r) { return stockRow(r, pan[r.id]); }).join('')
+        : '<p class="small dim" style="margin-top:10px">Nothing counted yet. Add something below.</p>') +
+      '<div class="hr"></div>' +
+      '<button class="btn full" data-act="sheet" data-v="pantry">Add or change what is in the kitchen</button>' +
+      '</section>';
+
+    /* running low, from either of you */
+    const low = l.rows.filter(function (r) { return r.low; });
+    out += '<section class="card">' +
+      '<header><div><div class="eyebrow">Running low</div><h2>' + (low.length || 'Nothing') + ' flagged</h2></div></header>' +
+      '<p class="small muted">Either of you can flag something. It shows on both phones and goes straight onto the list.</p>' +
+      (low.length ? low.map(function (r) {
+        return '<div class="checkrow"><div class="body"><div class="ttl">' + esc(r.name) + '</div>' +
+          '<div class="xs dim">flagged by ' + esc(S.DISPLAY[(pan[r.id] || {}).by] || '\u2014') + '</div></div>' +
+          '<button class="btn sm" data-act="low" data-id="' + r.id + '" data-v="0">Got it</button></div>';
+      }).join('') : '') +
+      '<div class="hr"></div>' +
+      '<button class="btn full" data-act="sheet" data-v="low">Flag something as low</button>' +
+      '</section>';
+
+    out += '<section class="card tight"><div class="eyebrow">Weekly list</div>' +
+      '<p class="small" style="margin:6px 0">A fresh list appears here every Monday, and the app opens it for you the first time ' +
+      'you use it that week. Reminders also pop it up if you have them switched on.</p>' +
+      '<p class="xs dim">Straight answer on the email: with no server behind it, the app cannot post you mail by itself. ' +
+      '<b>Email it</b> opens your mail app with the whole list already written, addressed and ready to send.</p>' +
+      '<button class="btn sm" data-act="sheet" data-v="weeklist">Show this week\u2019s list now</button>' +
+      '</section>';
+    return out;
+  }
+
+  function buyRow(r) {
+    const qty = r.pkg && r.packages ? r.packages + ' \u00d7 ' + r.pkg.label : r.shortLabel;
+    const who = [];
+    if (r.byPerson.danil > 0.05) who.push('Danil');
+    if (r.byPerson.towne > 0.05) who.push('Towne');
+    return '<div class="checkrow">' +
+      '<div class="body"><div class="ttl">' + esc(r.name) + '</div>' +
+      '<div class="xs dim">' +
+        (r.pkg && r.packages ? esc(qty) + ' \u00b7 ' : '') +
+        'week needs ' + esc(r.needLabel) +
+        (r.tracked ? ' \u00b7 have ' + esc(FOODS.qtyLabel(r.id, r.stock)) : ' \u00b7 not counted') +
+        (who.length === 1 ? ' \u00b7 ' + who[0] + ' only' : '') +
+        (r.low ? ' \u00b7 flagged low' : '') +
+      '</div></div>' +
+      '<b class="num" style="white-space:nowrap">' + esc(r.pkg && r.packages ? r.packages + '\u00d7' : r.shortLabel) + '</b>' +
+      '</div>';
+  }
+
+  function stockRow(r, entry) {
+    const pct = r.needUnits > 0 ? Math.min(100, Math.round(r.stock / r.needUnits * 100)) : 100;
+    const tone = pct >= 100 ? 'good' : pct >= 50 ? 'warning' : 'critical';
+    return '<div class="checkrow">' +
+      '<div class="body"><div class="ttl">' + esc(r.name) + '</div>' +
+      '<div class="xs dim">' + esc(FOODS.qtyLabel(r.id, r.stock)) + ' left \u00b7 this week needs ' + esc(r.needLabel) +
+      (entry && entry.by ? ' \u00b7 last updated by ' + esc(S.DISPLAY[entry.by]) : '') + '</div></div>' +
+      '<span class="pill ' + tone + '">' + (pct >= 100 ? ICON.check : ICON.alert) + pct + '%</span>' +
+      '</div>';
+  }
+
+
+  function backupSheet() {
+    const txt = S.exportText();
+    const days = Object.keys(S.me().days).length;
+    return '<h2>Back up &amp; restore</h2>' +
+      '<div class="card tight"><div class="eyebrow">Copy out of this device</div>' +
+      '<p class="small" style="margin:6px 0">Everything for ' + esc(S.DISPLAY[S.state.me]) + ' \u2014 ' + days +
+      ' logged day' + (days === 1 ? '' : 's') + ', your profile, your food list and the kitchen.</p>' +
+      '<textarea id="bkOut" readonly rows="4" class="code" style="width:100%;font-size:.68rem" ' +
+      'onclick="this.select()">' + esc(txt) + '</textarea>' +
+      '<button class="btn sm" data-act="copy" data-from="#bkOut">' + ICON.copy + ' Copy it all</button></div>' +
+
+      '<div class="card tight"><div class="eyebrow">Paste into this device</div>' +
+      '<p class="small" style="margin:6px 0">Paste a backup below. It is <b>merged</b>, never overwritten \u2014 ' +
+      'days this device already has are kept, and anything new is added. Running it twice changes nothing.</p>' +
+      '<form data-form="restore">' +
+      '<textarea name="blob" rows="4" class="code" style="width:100%;font-size:.68rem" ' +
+      'placeholder="Paste the backup here"></textarea>' +
+      '<button class="btn primary full" type="submit">Merge it in</button></form></div>' +
+
+      '<p class="xs dim">The hosted preview page and your own installed app are separate browsers as far as storage goes, ' +
+      'so this is how history crosses between them.</p>';
+  }
+
+  function pantrySheet() {
+    const G = FIT.GROCERY;
+    const pan = S.pantry();
+    const ids = G.trackable().sort(function (a, b) { return FOODS.name(a).localeCompare(FOODS.name(b)); });
+    return '<h2>What is in the kitchen</h2>' +
+      '<p class="small muted">Count in the food\u2019s own unit \u2014 nuggets, grams, cans, boxes. Leave anything blank that you do not want counted.</p>' +
+      '<form data-form="pantry">' +
+      ids.map(function (id) {
+        const f = FOODS.items[id];
+        const e = pan[id] || {};
+        const val = typeof e.stock === 'number' ? e.stock : '';
+        return '<div class="checkrow"><div class="body"><div class="ttl">' + esc(f.name) + '</div>' +
+          '<div class="xs dim">counted in ' + esc(f.unit === 'g' ? 'grams' : f.unit + 's') +
+          (f.pkg ? ' \u00b7 one ' + esc(f.pkg.label) + ' = ' + f.pkg.units : '') + '</div></div>' +
+          '<input name="' + id + '" type="number" step="any" min="0" inputmode="decimal" value="' + val + '" ' +
+          'style="width:84px;text-align:center;padding:8px;border-radius:9px;border:1px solid var(--hair);background:var(--page)" ' +
+          'aria-label="' + esc(f.name) + ' in stock"></div>';
+      }).join('') +
+      '<button class="btn primary full" type="submit" style="margin-top:12px">Save</button></form>';
+  }
+
+  function lowSheet() {
+    const G = FIT.GROCERY;
+    const pan = S.pantry();
+    const ids = G.trackable().sort(function (a, b) { return FOODS.name(a).localeCompare(FOODS.name(b)); });
+    return '<h2>Running low</h2>' +
+      '<p class="small muted">Tap anything that is nearly gone. It goes on the list and shows on both phones.</p>' +
+      ids.map(function (id) {
+        const on = !!(pan[id] || {}).low;
+        return '<button class="checkrow" data-act="low" data-id="' + id + '" data-v="' + (on ? '0' : '1') + '" style="width:100%;text-align:left">' +
+          '<span class="check" aria-pressed="' + on + '">' + ICON.check + '</span>' +
+          '<span class="body"><span class="ttl">' + esc(FOODS.name(id)) + '</span></span></button>';
+      }).join('');
+  }
+
+  function weekListSheet() {
+    const G = FIT.GROCERY;
+    const from = G.weekStart(ui.date);
+    const l = G.list(from, 7);
+    const end = N.addDays(from, 6);
+    return '<h2>This week\u2019s list</h2>' +
+      '<p class="small muted">' + esc(G.pretty(from)) + ' \u2014 ' + esc(G.pretty(end)) + '</p>' +
+      (l.toBuy.length
+        ? G.byAisle(l.toBuy).map(function (a) {
+            return '<div class="eyebrow" style="margin-top:12px">' + esc(a.label) + '</div>' +
+              a.rows.map(function (r) {
+                return '<div class="checkrow" style="padding:8px 0"><div class="body"><div class="ttl">' + esc(r.name) + '</div>' +
+                  '<div class="xs dim">' + esc(r.pkg && r.packages ? r.packages + ' \u00d7 ' + r.pkg.label : r.shortLabel) + '</div></div></div>';
+              }).join('');
+          }).join('')
+        : '<div class="banner good"><span class="ic">' + ICON.check + '</span><div>Nothing needed. The kitchen covers the week.</div></div>') +
+      '<div class="row wrap" style="margin-top:14px">' +
+        '<button class="btn sm" data-act="grocery-copy">' + ICON.copy + ' Copy</button>' +
+        '<button class="btn sm" data-act="grocery-share">' + ICON.share + ' Share</button>' +
+        '<button class="btn sm" data-act="grocery-mail">Email it</button>' +
+        '<button class="btn sm primary" data-act="grocery-seen">Done</button>' +
+      '</div>';
   }
 
   /* =======================================================================
@@ -870,6 +1108,10 @@
             '<span class="check">' + ICON.plus + '</span><span class="body"><span class="ttl">' + esc(t) + '</span></span></button>';
         }).join('');
     }
+    if (sheet.name === 'backup') return backupSheet();
+    if (sheet.name === 'pantry') return pantrySheet();
+    if (sheet.name === 'low') return lowSheet();
+    if (sheet.name === 'weeklist') return weekListSheet();
     if (sheet.name === 'profile') return profileSheet(v);
     if (sheet.name === 'settings') return settingsSheet(v);
     if (sheet.name === 'sync') return syncSheet();
@@ -955,6 +1197,11 @@
           '<button class="linkbtn" data-act="reset-adjust">Reset</button></p></div>'
         : '') +
 
+      '<div class="card tight"><div class="eyebrow">Your data</div>' +
+      '<p class="small" style="margin:6px 0">Copy everything out of this device, or paste it into another one. ' +
+      'Use this to carry your history to a new phone, or across from the preview page.</p>' +
+      '<button class="btn sm" data-act="sheet" data-v="backup">Back up / restore</button></div>' +
+
       '<div class="card tight"><div class="eyebrow">Replay</div>' +
       '<button class="btn sm" data-act="replay-welcome">Show the welcome screen again</button></div>' +
 
@@ -970,8 +1217,8 @@
       '<p class="small muted">Status: <b>' + esc(S.SYNC_LABEL[st.status] || st.status) + '</b>' +
       (st.detail ? ' — ' + esc(st.detail) : '') + '</p>' +
       '<div class="card tight"><div class="eyebrow">What is stored where</div>' +
-      '<p class="small">Each of you writes only your own document — <code>planners/' + S.DOC('danil') + '</code> and ' +
-      '<code>planners/' + S.DOC('towne') + '</code> — so you can both be logging dinner at the same moment and neither of you ' +
+      '<p class="small">Each of you writes only your own document — <code>' + S.COLL + '/danil</code> and ' +
+      '<code>' + S.COLL + '/towne</code> — so you can both be logging dinner at the same moment and neither of you ' +
       'can overwrite the other. Everything is mirrored on your phone first, so the app works with no signal.</p></div>' +
 
       (st.status === 'denied' || st.status === 'local' || st.status === 'error'
@@ -981,7 +1228,8 @@
         : '') +
 
       '<div class="card tight"><div class="eyebrow">' + (authMode ? 'Recommended — with logins' : 'With logins (do this one)') + '</div>' +
-      '<p class="xs dim">Each document is writable only by the account that claimed it. Requires Authentication → Sign-in method → Email/Password → Enable.</p>' +
+      '<p class="xs dim">This is the whole rules file: it leaves the homework planner\u2019s rules exactly as they are ' +
+      'and adds this app in its own collection beside them. Requires Authentication \u2192 Sign-in method \u2192 Email/Password \u2192 Enable.</p>' +
       '<pre class="code" id="rulesAuth">' + esc(S.RULES_AUTH) + '</pre>' +
       '<button class="btn sm" data-act="copy" data-from="#rulesAuth">' + ICON.copy + ' Copy</button></div>' +
 
@@ -998,6 +1246,43 @@
      Actions
      ======================================================================= */
   Object.assign(U.acts, {
+    'extra': function (t) {
+      S.setExtra(ui.date, t.getAttribute('data-id'), +t.getAttribute('data-d'));
+    },
+    'low': function (t) {
+      S.setLow(t.getAttribute('data-id'), t.getAttribute('data-v') === '1');
+    },
+    'grocery-copy': function () {
+      const G = FIT.GROCERY;
+      const txt = G.text(G.list(G.weekStart(ui.date), 7));
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(function () { toast('List copied.'); },
+          function () { toast('Could not copy \u2014 try Share instead.'); });
+      } else toast('Could not copy \u2014 try Share instead.');
+    },
+    'grocery-share': function () {
+      const G = FIT.GROCERY;
+      const l = G.list(G.weekStart(ui.date), 7);
+      const txt = G.text(l);
+      if (navigator.share) {
+        navigator.share({ title: 'Grocery list', text: txt }).catch(function () {});
+      } else {
+        U.acts['grocery-copy']();
+      }
+    },
+    'grocery-mail': function () {
+      const G = FIT.GROCERY;
+      const l = G.list(G.weekStart(ui.date), 7);
+      const partner = S.person(S.partnerKey());
+      const to = (partner.profile && partner.profile.email) || (S.me().profile.email || '');
+      const href = G.mailto(l, to);
+      try { window.location.href = href; } catch (e) {}
+      toast(to ? 'Opening your mail app, addressed to ' + to : 'Opening your mail app with the list.', 4200);
+    },
+    'grocery-seen': function () {
+      FIT.GROCERY.markShown(ui.date);
+      ui.sheet = null; render();
+    },
     'set-budget': function (t) {
       S.setBudget(t.getAttribute('data-d') || ui.date, +t.getAttribute('data-v'));
     },
@@ -1010,7 +1295,11 @@
       if (!done) toast('Logged. ' + mins(v.session.totalMinutes) + ' in the gym.');
     },
     'toggle-meal': function (t) {
-      const on = S.toggleMeal(ui.date, t.getAttribute('data-m'));
+      const m = t.getAttribute('data-m');
+      const v = S.view(ui.date);
+      const meal = v.meals && v.meals.meals[m];
+      const items = meal ? meal.items.map(function (i) { return { id: i.id, q: i.q }; }) : null;
+      const on = S.toggleMeal(ui.date, m, items);
       if (on) toast('Logged.');
     },
     'pick-meal': function (t) {
@@ -1043,6 +1332,26 @@
   });
 
   Object.assign(U.forms, {
+    restore: function (data) {
+      const r = S.importText(data.blob || '');
+      if (!r.ok) { toast(r.error, 5000); return; }
+      ui.sheet = null; render();
+      toast(r.added
+        ? 'Merged in \u2014 ' + r.added + ' new day' + (r.added === 1 ? '' : 's') + ' for ' + S.DISPLAY[r.person] + '.'
+        : 'Merged in. Nothing new to add.', 4500);
+    },
+    pantry: function (data) {
+      let n = 0;
+      Object.keys(data).forEach(function (id) {
+        const raw = String(data[id]).trim();
+        if (raw === '') { S.clearStock(id); return; }
+        const val = Number(raw);
+        if (isNaN(val) || val < 0) return;
+        S.setStock(id, val); n++;
+      });
+      ui.sheet = null; render();
+      toast(n ? 'Kitchen updated.' : 'Saved.');
+    },
     weigh: function (data) {
       const r = S.setWeight(ui.date, data.w);
       if (!r.ok) { toast(r.error); return; }

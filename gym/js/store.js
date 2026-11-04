@@ -1,13 +1,15 @@
 /* ===========================================================================
    store.js — local-first state with live two-way sync.
 
-   Shape: one Firestore document per person, inside the same `planners`
-   collection the other planner already uses, so a single security rule covers
-   both apps.
+   Shape: one Firestore document per person, in this app's own collection.
 
-       planners/fit-dt1-danil     written only by Danil
-       planners/fit-dt1-towne     written only by Towne
-       planners/fit-dt1-shared    tiny, merge-written, who claimed which slot
+       fitness/danil     written only by Danil
+       fitness/towne     written only by Towne
+       fitness/shared    tiny, merge-written, who claimed which slot
+
+   It deliberately does NOT share the `planners` collection with the homework
+   planner. That one's rules are written tightly around its own document shape,
+   and a shared collection would mean one app's rules could break the other.
 
    Each person only ever writes their own document, and nudges live on the
    sender's document as `nudgesOut`. That means there is no write contention
@@ -24,7 +26,8 @@ FIT.STORE = (() => {
 
   const CREW = 'dt1';
   const PEOPLE = ['danil', 'towne'];
-  const DOC = (p) => `fit-${CREW}-${p}`;
+  const COLL = 'fitness';
+  const DOC = (p) => p;
   const LS = (p) => `fit:${CREW}:${p}`;
   const LS_PREFS = `fit:${CREW}:prefs`;
   const SCHEMA = 1;
@@ -62,7 +65,8 @@ FIT.STORE = (() => {
       days: {}, lifts: {},
       adjust: { kcal: 0, cardio: 0, at: null, reason: '', history: [] },
       allowedFoods: person === 'towne' ? FIT.FOODS.TOWNE_CORE.slice() : FIT.FOODS.ALL_IDS.slice(),
-      nudgesOut: [], seen: {}, updatedAt: 0
+      coreVersion: FIT.FOODS.CORE_VERSION,
+      pantry: {}, nudgesOut: [], seen: {}, updatedAt: 0
     };
   }
 
@@ -111,9 +115,18 @@ FIT.STORE = (() => {
       days: d.days || {}, lifts: d.lifts || {},
       adjust: { ...b.adjust, ...(d.adjust || {}) },
       allowedFoods: Array.isArray(d.allowedFoods) ? d.allowedFoods : b.allowedFoods,
+      pantry: (d.pantry && typeof d.pantry === 'object') ? d.pantry : {},
       nudgesOut: Array.isArray(d.nudgesOut) ? d.nudgesOut : [],
       seen: d.seen || {}, v: SCHEMA, person
     };
+    /* New foods added to the standard list reach existing installs here. It
+       only ever adds; nothing anyone un-ticked is put back. */
+    if ((d.coreVersion || 0) < FIT.FOODS.CORE_VERSION) {
+      const add = person === 'towne' ? FIT.FOODS.TOWNE_CORE : FIT.FOODS.ALL_IDS;
+      for (const id of add) if (out.allowedFoods.indexOf(id) < 0) out.allowedFoods.push(id);
+      out.coreVersion = FIT.FOODS.CORE_VERSION;
+      out.foodsJustAdded = true;
+    } else out.coreVersion = d.coreVersion;
     /* never let a corrupt day record take the app down */
     for (const k of Object.keys(out.days)) {
       const r = out.days[k];
@@ -127,7 +140,7 @@ FIT.STORE = (() => {
   /* =======================================================================
      Firestore
      ======================================================================= */
-  const fs = { db: null, unsub: [], pushTimer: null, queued: false };
+  const fs = { db: null, unsub: [], pushTimer: null, queued: false, merged: {} };
 
   function setSync(status, detail) {
     if (state.sync.status === status && state.sync.detail === detail) return;
@@ -153,15 +166,16 @@ FIT.STORE = (() => {
       try { fs.db.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}
       setSync('connecting');
       stopSync();
+      fs.merged = {};
       for (const p of PEOPLE) {
-        const ref = fs.db.collection('planners').doc(DOC(p));
+        const ref = fs.db.collection(COLL).doc(DOC(p));
         fs.unsub.push(ref.onSnapshot(
           { includeMetadataChanges: true },
           (snap) => onSnap(p, snap),
           (err) => onErr(err)
         ));
       }
-      fs.unsub.push(fs.db.collection('planners').doc(DOC('shared')).onSnapshot(
+      fs.unsub.push(fs.db.collection(COLL).doc(DOC('shared')).onSnapshot(
         (snap) => { if (snap.exists) { state.shared = snap.data() || {}; emit('shared', state.shared); } },
         () => {}
       ));
@@ -180,6 +194,22 @@ FIT.STORE = (() => {
     }
     const remote = snap.data() || {};
     const rUp = +remote.updatedAt || 0, lUp = +(state.data[person].updatedAt || 0);
+
+    /* First real meeting with the server copy: merge instead of overwrite, so
+       neither phone's history is lost. Afterwards, newest wins as normal. */
+    if (!snap.metadata.fromCache && !fs.merged[person]) {
+      fs.merged[person] = true;
+      if (lUp > 0 && rUp > 0) {
+        const gained = newDays(remote, state.data[person]);
+        state.data[person] = mergeDocs(state.data[person], remote, person);
+        saveLocal(person);
+        emit('change', { person, from: 'merge', gained: gained });
+        if (person === state.me) push();
+        setSync('live');
+        return;
+      }
+    }
+
     if (rUp > lUp) {
       state.data[person] = migrate(remote, person);
       saveLocal(person);
@@ -205,6 +235,115 @@ FIT.STORE = (() => {
       : 'Firestore rules require a signed-in user, or deny access entirely.';
   }
 
+
+  /* =======================================================================
+     Merging two copies of the same person.
+
+     The first time a device meets the server copy, both sides may hold real
+     history that the other has never seen — which is exactly what happens
+     when two phones have been running without syncing. Taking the newer
+     document wholesale would throw one of them away, so the first meeting is
+     a merge, per day, and only after that does newest-wins apply.
+     ======================================================================= */
+
+  /** How much a single day's record actually holds. */
+  function dayScore(r) {
+    if (!r || typeof r !== 'object') return -1;
+    return (r.w > 0 ? 4 : 0) +
+      (r.meals ? Object.keys(r.meals).length : 0) +
+      (r.workout && r.workout.done ? 3 : 0) +
+      (r.workout && r.workout.completed ? r.workout.completed.length * 0.1 : 0) +
+      (r.waist > 0 ? 1 : 0) +
+      (r.extras ? Object.keys(r.extras).length : 0) +
+      (r.sets ? Object.keys(r.sets).length : 0);
+  }
+
+  function mergeDocs(a, b, person) {
+    const L = migrate(a || {}, person), R = migrate(b || {}, person);
+    const out = { ...R };
+
+    out.days = { ...R.days };
+    for (const k of Object.keys(L.days)) {
+      out.days[k] = R.days[k] ? (dayScore(L.days[k]) > dayScore(R.days[k]) ? L.days[k] : R.days[k]) : L.days[k];
+    }
+
+    out.lifts = { ...R.lifts };
+    for (const k of Object.keys(L.lifts || {})) {
+      const x = L.lifts[k], y = R.lifts[k];
+      if (!y || (x.date || '') > (y.date || '')) out.lifts[k] = x;
+    }
+
+    out.pantry = { ...(R.pantry || {}) };
+    for (const k of Object.keys(L.pantry || {})) {
+      const x = L.pantry[k], y = R.pantry[k];
+      if (!y || (x.at || 0) > (y.at || 0)) out.pantry[k] = x;
+    }
+
+    out.allowedFoods = (R.allowedFoods || []).slice();
+    (L.allowedFoods || []).forEach(id => { if (out.allowedFoods.indexOf(id) < 0) out.allowedFoods.push(id); });
+
+    const ids = new Set((R.nudgesOut || []).map(n => n.id));
+    out.nudgesOut = (R.nudgesOut || []).concat((L.nudgesOut || []).filter(n => !ids.has(n.id)))
+      .sort((x, y) => (x.at || 0) - (y.at || 0)).slice(-60);
+
+    out.seen = { ...(R.seen || {}) };
+    for (const k of Object.keys(L.seen || {})) {
+      const x = L.seen[k], y = R.seen[k];
+      out.seen[k] = (y == null) ? x : (typeof x === 'number' && typeof y === 'number') ? Math.max(x, y) : (x > y ? x : y);
+    }
+
+    /* the profile that finished setup wins; failing that, the newer one */
+    const lNewer = (L.updatedAt || 0) >= (R.updatedAt || 0);
+    out.profile = (R.profile.setupDone && !L.profile.setupDone) ? R.profile
+      : (L.profile.setupDone && !R.profile.setupDone) ? L.profile
+      : (lNewer ? L.profile : R.profile);
+    /* keep the earliest start date so no logged history falls outside the plan */
+    const starts = [L.profile.startDate, R.profile.startDate].filter(Boolean).sort();
+    if (starts.length) out.profile = { ...out.profile, startDate: starts[0] };
+
+    const la = L.adjust || {}, ra = R.adjust || {};
+    out.adjust = ((la.at || '') > (ra.at || '')) ? { ...la } : { ...ra };
+    const seenH = new Set();
+    out.adjust.history = (ra.history || []).concat(la.history || []).filter(h => {
+      const key = h.at + ':' + h.kcal + ':' + h.cardio;
+      if (seenH.has(key)) return false;
+      seenH.add(key); return true;
+    }).sort((x, y) => (x.at < y.at ? -1 : 1));
+
+    out.authUid = R.authUid || L.authUid || null;
+    if (L.pcHash || R.pcHash) out.pcHash = R.pcHash || L.pcHash;
+    out.coreVersion = Math.max(L.coreVersion || 0, R.coreVersion || 0);
+    out.updatedAt = Math.max(L.updatedAt || 0, R.updatedAt || 0) + 1;
+    return out;
+  }
+
+  /** Count of dates one side had that the other did not. */
+  function newDays(from, into) {
+    let n = 0;
+    for (const k of Object.keys((from && from.days) || {})) if (!(into.days || {})[k]) n++;
+    return n;
+  }
+
+  /* ---- carrying data by hand, when there is no database ---- */
+  function exportText(personKey) {
+    const key = personKey || state.me;
+    return JSON.stringify({ app: 'dt-fit', v: SCHEMA, person: key, exportedAt: Date.now(), doc: compact(state.data[key]) });
+  }
+
+  function importText(txt) {
+    let obj;
+    try { obj = JSON.parse(String(txt).trim()); }
+    catch (e) { return { ok: false, error: 'That is not a valid backup \u2014 copy the whole block, including the braces.' }; }
+    if (!obj || obj.app !== 'dt-fit' || !obj.doc) return { ok: false, error: 'That does not look like a planner backup.' };
+    const person = (obj.person === 'danil' || obj.person === 'towne') ? obj.person : state.me;
+    const added = newDays(obj.doc, state.data[person]);
+    state.data[person] = mergeDocs(obj.doc, state.data[person], person);
+    saveLocal(person);
+    if (person === state.me) push();
+    emit('change', { person, from: 'import' });
+    return { ok: true, person: person, added: added };
+  }
+
   /** Keep the document small: days older than 180 days keep only the weight. */
   function compact(d) {
     const cutoff = N.addDays(N.todayStr(), -180);
@@ -224,31 +363,52 @@ FIT.STORE = (() => {
     fs.pushTimer = setTimeout(() => {
       const body = compact(state.data[state.me]);
       state.sync.lastPush = Date.now();
-      fs.db.collection('planners').doc(DOC(state.me)).set(body)
+      fs.db.collection(COLL).doc(DOC(state.me)).set(body)
         .then(() => { if (state.sync.status !== 'live') setSync('live'); })
         .catch(onErr);
     }, 600);
   }
 
   /** The two-line fix for a `denied` status, shown in Settings. */
+  /* Paste-ready rules that keep the homework planner working exactly as it
+     does today and add this app alongside it. */
   const RULES_AUTH = `rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /planners/{doc} {
+
+    // Towne's homework planner - unchanged
+    match /planners/{key} {
+      allow read: if key.size() >= 20;
+      allow write: if key.size() >= 20
+        && request.resource.data.keys().hasOnly(['settings', 'assignments', 'classes', 'updatedAt'])
+        && request.resource.data.assignments is list
+        && request.resource.data.assignments.size() <= 500;
+    }
+
+    // Gym planner - signed in, and each person writes only their own document
+    match /fitness/{doc} {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
       allow update, delete: if request.auth != null
         && (!('authUid' in resource.data) || resource.data.authUid == request.auth.uid);
     }
+
+    match /{document=**} { allow read, write: if false; }
   }
 }`;
 
   const RULES_OPEN = `rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /planners/{doc} {
-      allow read, write: if true;
+    match /planners/{key} {
+      allow read: if key.size() >= 20;
+      allow write: if key.size() >= 20
+        && request.resource.data.keys().hasOnly(['settings', 'assignments', 'classes', 'updatedAt'])
+        && request.resource.data.assignments is list
+        && request.resource.data.assignments.size() <= 500;
     }
+    match /fitness/{doc} { allow read, write: if true; }
+    match /{document=**} { allow read, write: if false; }
   }
 }`;
 
@@ -301,13 +461,86 @@ service cloud.firestore {
     touch(); return { ok: true };
   }
 
-  function toggleMeal(dateStr, meal) {
+  /** `items` is [{id, q}] for what that meal actually contains, so eating it
+      comes out of the kitchen stock and un-ticking puts it back. */
+  function toggleMeal(dateStr, meal, items) {
     const rec = ensureDay(dateStr);
     rec.meals = rec.meals || {};
-    rec.meals[meal] = !rec.meals[meal] ? Date.now() : 0;
-    if (!rec.meals[meal]) delete rec.meals[meal];
+    const turningOn = !rec.meals[meal];
+    if (turningOn) {
+      rec.meals[meal] = Date.now();
+      if (items && items.length) {
+        rec.consumed = rec.consumed || {};
+        rec.consumed[meal] = items.map(i => ({ id: i.id, q: i.q }));
+        consume(rec.consumed[meal], -1);
+      }
+    } else {
+      delete rec.meals[meal];
+      if (rec.consumed && rec.consumed[meal]) { consume(rec.consumed[meal], +1); delete rec.consumed[meal]; }
+    }
     touch();
-    return !!rec.meals[meal];
+    return turningOn;
+  }
+
+  /** Move stock by `sign` x quantity. Never goes below zero. */
+  function consume(items, sign) {
+    const d = me();
+    d.pantry = d.pantry || {};
+    for (const it of items) {
+      const cur = d.pantry[it.id];
+      if (!cur || typeof cur.stock !== 'number') continue;   /* untracked: ignore */
+      cur.stock = Math.max(0, Math.round((cur.stock + sign * it.q) * 100) / 100);
+      cur.at = Date.now();
+      if (sign < 0 && cur.low) { /* leave the flag where the person put it */ }
+    }
+  }
+
+  /* ---- extras: drinks and snacks logged beside the three meals ---- */
+  function setExtra(dateStr, foodId, delta) {
+    const rec = ensureDay(dateStr);
+    rec.extras = rec.extras || {};
+    const before = rec.extras[foodId] || 0;
+    const after = Math.max(0, Math.min(20, before + delta));
+    if (after) rec.extras[foodId] = after; else delete rec.extras[foodId];
+    if (after !== before) consume([{ id: foodId, q: after - before }], -1);
+    touch();
+    return after;
+  }
+
+  /* ---- the kitchen ---- */
+  function setStock(foodId, units) {
+    const d = me();
+    d.pantry = d.pantry || {};
+    const v = Math.max(0, Math.round((+units) * 100) / 100);
+    d.pantry[foodId] = { ...(d.pantry[foodId] || {}), stock: isNaN(v) ? 0 : v, at: Date.now() };
+    touch();
+  }
+
+  function setLow(foodId, low) {
+    const d = me();
+    d.pantry = d.pantry || {};
+    d.pantry[foodId] = { ...(d.pantry[foodId] || {}), low: !!low, at: Date.now() };
+    touch();
+  }
+
+  function clearStock(foodId) {
+    const d = me();
+    if (d.pantry) delete d.pantry[foodId];
+    touch();
+  }
+
+  /** One kitchen, two writers: merge both people's entries, newest edit wins. */
+  function pantry() {
+    const out = {};
+    for (const p of PEOPLE) {
+      const map = (state.data[p] && state.data[p].pantry) || {};
+      for (const id of Object.keys(map)) {
+        const e = map[id];
+        if (!e) continue;
+        if (!out[id] || (e.at || 0) > (out[id].at || 0)) out[id] = { ...e, by: p };
+      }
+    }
+    return out;
   }
 
   function setMealChoice(dateStr, meal, templateId) {
@@ -451,7 +684,7 @@ service cloud.firestore {
       }
     }
     const tgt = FIT.NUTRITION.targets(prof, session.estKcal, { today: dateStr, weight: latest, adjust: d.adjust });
-    const meals = tgt.ok ? FIT.NUTRITION.planDay(key, dateStr, tgt, d.allowedFoods, rec.mealPick || {}) : null;
+    const meals = tgt.ok ? FIT.NUTRITION.planDay(key, dateStr, tgt, d.allowedFoods, rec.mealPick || {}, rec.extras || {}) : null;
     return { key, name: DISPLAY[key], data: d, profile: prof, rec, latest, session, tgt, meals };
   }
 
@@ -478,11 +711,13 @@ service cloud.firestore {
   }
 
   return {
-    CREW, PEOPLE, DISPLAY, SCHEMA, DOC, RULES_AUTH, RULES_OPEN, SYNC_LABEL,
+    CREW, PEOPLE, DISPLAY, SCHEMA, DOC, COLL, RULES_AUTH, RULES_OPEN, SYNC_LABEL,
     state, on, off, emit, init, setMe, rememberedMe, startSync, stopSync, push, touch,
     me, other, partnerKey, person, day, ensureDay, view, latestWeight, sessionsByDate,
     setWeight, setWaist, toggleMeal, setMealChoice, setBudget, setMode,
+    setExtra, setStock, setLow, clearStock, pantry,
     toggleExercise, completeWorkout, logLift, setProfile, setAllowedFoods, toggleFood,
-    applyAdjustment, sendNudge, markSeen, incomingNudges, setPref, defaultProfile, blank
+    applyAdjustment, sendNudge, markSeen, incomingNudges, setPref, defaultProfile, blank,
+    mergeDocs, exportText, importText, newDays
   };
 })();
