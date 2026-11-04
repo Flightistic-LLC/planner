@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Danil &amp; Towne</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A gym, meal and weight planner for two people who keep each other accountable. Built on CDC guidance.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" sizes="192x192">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Danil &amp; Towne">
+
+<link rel="stylesheet" href="app.css">
+
+<!-- Firebase project. A web apiKey is a public identifier, not a secret:
+     what actually protects the data are the Firestore rules plus the two
+     sign-ins (Settings → Sync shows the exact rules to paste). -->
+<script>
+window.FIREBASE_CONFIG = {
+  apiKey: "AIzaSyApREtks0Wm__YKf4Iwr2L7wPghxYoQ9JM",
+  authDomain: "planner-2470d.firebaseapp.com",
+  projectId: "planner-2470d",
+  storageBucket: "planner-2470d.firebasestorage.app",
+  messagingSenderId: "14214578266",
+  appId: "1:14214578266:web:bb24f3aff82019cad7d863"
+};
+</script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+</head>
+<body>
+<div id="app"><div class="login"><div class="box" style="text-align:center"><p class="muted">Loading&hellip;</p></div></div></div>
+<div id="toastHost" aria-live="polite"></div>
+
+<noscript><p style="padding:24px">This planner needs JavaScript.</p></noscript>
+
+<!-- data and formulas -->
+<script src="js/cdc.js"></script>
+<script src="js/foods.js"></script>
+<script src="js/exercises.js"></script>
+<script src="js/nutrition.js"></script>
+<script src="js/program.js"></script>
+<script src="js/coach.js"></script>
+<!-- state, sync, identity -->
+<script src="js/store.js"></script>
+<script src="js/grocery.js"></script>
+<script src="js/auth.js"></script>
+<!-- presentation -->
+<script src="js/charts.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/views.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
